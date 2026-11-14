@@ -9,7 +9,7 @@ router=APIRouter()
 def meta():return metadata()
 @router.get('/overview')
 def overview(db=Depends(get_db),user=Depends(current_user)):
-    return {'datasets':db.scalar(select(func.count()).select_from(Dataset)), 'records':sum(len(d.records) for d in db.scalars(select(Dataset))), 'jobs':db.scalar(select(func.count()).select_from(Job)), 'approved':db.scalar(select(func.count()).select_from(Job).where(Job.approved==True)), 'reports':db.scalar(select(func.count()).select_from(Report))}
+    return {'datasets':db.scalar(select(func.count()).select_from(Dataset)), 'records':sum(len(d.records) for d in db.scalars(select(Dataset))), 'jobs':db.scalar(select(func.count()).select_from(Job)), 'approved':db.scalar(select(func.count()).select_from(Job).where(Job.approved==True,Job.status=='completed')), 'reports':db.scalar(select(func.count()).select_from(Report))}
 @router.get('/audits')
 def audits(db=Depends(get_db),user=Depends(current_user)):
     return [{'id':a.id,'actor':a.actor,'action':a.action,'detail':a.detail,'at':a.at} for a in db.scalars(select(Audit).order_by(Audit.id.desc()).limit(50))]

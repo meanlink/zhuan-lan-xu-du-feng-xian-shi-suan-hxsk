@@ -47,9 +47,12 @@ services:
       start_period: 15s
   worker:
     build: ./backend
-    container_name: ${COMPOSE_PROJECT_NAME:-reader-risk}-worker
+    # 不设 container_name，可用 docker compose up -d --scale worker=2 加开计算进程；
+    # 每个进程有独立 WORKER_ID 与领取租约，加开不会重排其他进程在跑的试验。
     command: ["python", "-m", "src.worker"]
-    environment: *app-env
+    environment:
+      <<: *app-env
+      JOB_LEASE_SECONDS: ${JOB_LEASE_SECONDS:-60}
     volumes: ["analysis-artifacts:/artifacts"]
     depends_on:
       db: {condition: service_healthy}

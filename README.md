@@ -29,11 +29,22 @@ Python 3.12 / FastAPI / SQLAlchemy / NumPy / SciPy / scikit-learn；MySQL 8.0；
 ## 目录与工程约定
 backend/src/{models,schemas,services,routes,controllers,middlewares,constants,config,utils}；backend/scripts/seed_demo.py；backend/migrations/initial.py。
 frontend/src/{api,stores,types,components/common,hooks,pages,router,utils,constants}。
-Role 枚举：admin/analyst/viewer；JobStatus：queued/running/completed/failed。后端 backend/src/constants/enums.py，前端 frontend/src/constants/enums.js；路由权限在 middlewares/auth.py；页面按相同角色控制操作入口。
+Role 枚举：admin/analyst/viewer；JobStatus：queued/running/completed/failed/cancelled；执行记录 JobAttempt 状态：running/completed/failed/interrupted/cancelled。后端 backend/src/constants/enums.py，前端 frontend/src/constants/enums.js；路由权限在 middlewares/auth.py；页面按相同角色控制操作入口。
+
+## 并发领取、恢复与取消
+- 计算进程以独立 `WORKER_ID` 运行，通过数据库条件更新原子领取 `queued` 任务；同一试验只会有一个进程领到，重复领取或已取消的任务直接放弃。
+- 领取时写入领取令牌（claim_token）、租约（`JOB_LEASE_SECONDS`，默认 60 秒）和一条 JobAttempt。恢复后的重试**沿用首次领取的样本快照与参数**，不重新读取可能已变化的批次。
+- 执行期间持续续租；新进程启动不会按「running」一刀切重排，只回收租约已过期（原进程已失联）的试验，**不会重排其他计算进程仍在执行的试验**。
+- 发布结果必须匹配当前领取令牌且任务仍在运行。旧进程迟到的成功或失败一律丢弃并记审计 `job.stale_result_ignored`，不覆盖恢复后的结果。
+- 编辑（admin/analyst）可取消排队中或运行中的试验。取消与完成并发时由数据库条件更新裁定先落定者，后到的一方收到 409，不改写既有状态。
+- 结果页可查每次执行记录（领取进程、状态、是否发布、时间）；「生效」的只有唯一一次完成记录。
+- 未完成、失败与已取消试验不能批准，也不参与简报分发；`reports.create` 与 `deliver` 都按生效结果校验。
+
 
 ## 环境变量与 Docker
-COMPOSE_PROJECT_NAME=reader-risk；FRONTEND_PORT=18207；BACKEND_PORT=19207；DB_PORT=17707；DB_PASSWORD、JWT_SECRET 见 .env.example；SEED_DEMO 默认 true。共享命名产物卷供后端下载与 worker 写入，数据库/Redis 各持久卷。
+COMPOSE_PROJECT_NAME=reader-risk；FRONTEND_PORT=18207；BACKEND_PORT=19207；DB_PORT=17707；DB_PASSWORD、JWT_SECRET 见 .env.example；SEED_DEMO 默认 true；JOB_LEASE_SECONDS 默认 60。共享命名产物卷供后端下载与 worker 写入，数据库/Redis 各持久卷。
 恰好五服务均有健康检查。Redis 队列加 SQL 排队状态兜底；worker 按 next_run 生成本地收件箱文件。周期 60 秒至 30 天。分发结果为批准分析的固定快照；若需新数据重新计算并建立新计划。当前不连接邮件或企业聊天。
+需要加开计算进程时执行 `docker compose up -d --scale worker=2`；worker 服务不设固定 container_name，各进程经租约协调，不会重排彼此在跑的试验。
 错误响应、请求编号、Redis 每 IP 每分钟 240 次限流、JWT 和数据库操作审计。演示密钥与密码仅供本机模拟；生产部署前配置独立密钥与账号。
 
 ## 数据与验收

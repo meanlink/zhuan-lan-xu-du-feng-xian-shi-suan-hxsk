@@ -2,16 +2,24 @@ import time, os, csv, io, hashlib, json
 from fastapi import HTTPException
 from src.models import Job, Report, Delivery
 from src.config.settings import ARTIFACT_DIR
+def has_result(db, job_id):
+    """结果可否被批准：必须已完成、未取消、未失败，且有已落定的计算结果。"""
+    j = db.get(Job, job_id)
+    return bool(j and j.status == 'completed' and j.result)
+def effective(db, job_id):
+    """可被复核或分发使用的生效结果：已完成、获批准、未取消、未失败。"""
+    j = db.get(Job, job_id)
+    return bool(j and j.approved and has_result(db, job_id))
 def create(db, data):
-    j=db.get(Job,data.job_id)
-    if not j or j.status!='completed' or not j.approved:
+    if not effective(db,data.job_id):
         raise HTTPException(409,'请先选择已完成且获批准的分析结果')
+    j=db.get(Job,data.job_id)
     r=Report(name=data.name, job_id=j.id, destination=data.destination, interval_seconds=data.interval_seconds, next_run=time.time()+data.delay_seconds, enabled=True)
     db.add(r); db.flush()
     return r
 def deliver(db, report):
+    if not effective(db,report.job_id): return
     j=db.get(Job,report.job_id)
-    if not j or not j.approved: return
     out=io.StringIO()
     out.write('\ufeff')
     table=j.result.get('table',{})
